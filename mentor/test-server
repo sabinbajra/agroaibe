@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+for file in ./images/*; do 
+    echo "$file" && curl -sS -X POST -F "files=@$file" http://localhost:3124/predict | jq -c;
+done
