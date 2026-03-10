@@ -1,5 +1,3 @@
-//
-
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 
@@ -9,9 +7,10 @@ import {
     HttpMiddleware,
     HttpServer,
     HttpServerResponse,
+    HttpServerRequest,
 } from '@effect/platform';
 import { NodeHttpServer, NodeRuntime } from '@effect/platform-node';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, pipe } from 'effect';
 
 import { api } from './api';
 import { DISEASE_LABELS, DiseaseModel } from './disease';
@@ -19,19 +18,19 @@ import { IS_TOMATO_LABELS, IsTomatoModel } from './is-tomato';
 import { buildPredictions } from './predictions';
 
 // ============================================
-// CORS MIDDLEWARE - Add this section
+// CORS MIDDLEWARE - Fixed for Effect platform
 // ============================================
-const corsMiddleware = HttpMiddleware.make((req) =>
+const corsMiddleware: HttpMiddleware.HttpMiddleware = (request) =>
     Effect.gen(function* () {
         // Handle preflight OPTIONS requests
-        if (req.method === 'OPTIONS') {
+        if (request.method === 'OPTIONS') {
             console.log('[CORS] Handling OPTIONS preflight request');
             return HttpServerResponse.empty({
                 status: 204,
                 headers: {
-                    'Access-Control-Allow-Origin': '*', // Allow any origin (for development)
+                    'Access-Control-Allow-Origin': '*',
                     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Content-Type, Accept, Origin, X-Requested-With',
+                    'Access-Control-Allow-Headers': 'Content-Type, Accept, Origin',
                     'Access-Control-Max-Age': '86400',
                 },
             });
@@ -39,23 +38,23 @@ const corsMiddleware = HttpMiddleware.make((req) =>
 
         // For non-OPTIONS requests, continue to next middleware
         return yield* Effect.fail(null);
-    })
-);
+    });
 
-const addCorsHeaders = HttpMiddleware.make((req) =>
+const addCorsHeaders: HttpMiddleware.HttpMiddleware = (request) =>
     Effect.gen(function* () {
-        const response = yield* HttpServer.request(req);
+        // Process the request through the API
+        const response = yield* HttpServer.request(request);
 
+        // Add CORS headers to the response
         return HttpServerResponse.fromResponse(response, {
             headers: {
                 ...response.headers,
-                'Access-Control-Allow-Origin': '*', // Allow any origin
+                'Access-Control-Allow-Origin': '*',
                 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type, Accept, Origin, X-Requested-With',
+                'Access-Control-Allow-Headers': 'Content-Type, Accept, Origin',
             },
         });
-    })
-);
+    });
 
 // ============================================
 // HEALTH ENDPOINT
@@ -124,9 +123,37 @@ const apiLive = HttpApiBuilder.api(api).pipe(
 // SERVER CONFIGURATION WITH CORS
 // ============================================
 const serverLive = HttpApiBuilder.serve(
-    corsMiddleware,      // First handle OPTIONS preflight
-    addCorsHeaders,      // Then add CORS headers to all responses
-    HttpMiddleware.logger, // Finally log requests
+    HttpMiddleware.make((request) =>
+        Effect.gen(function* () {
+            // Handle OPTIONS preflight
+            if (request.method === 'OPTIONS') {
+                console.log('[CORS] Handling OPTIONS preflight');
+                return HttpServerResponse.empty({
+                    status: 204,
+                    headers: {
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                        'Access-Control-Allow-Headers': 'Content-Type, Accept, Origin',
+                        'Access-Control-Max-Age': '86400',
+                    },
+                });
+            }
+
+            // Process normal request
+            const response = yield* HttpServer.request(request);
+
+            // Add CORS headers
+            return HttpServerResponse.fromResponse(response, {
+                headers: {
+                    ...response.headers,
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type, Accept, Origin',
+                },
+            });
+        })
+    ),
+    HttpMiddleware.logger,
 ).pipe(
     Layer.provide(apiLive),
     HttpServer.withLogAddress,
